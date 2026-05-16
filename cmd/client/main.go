@@ -47,6 +47,6 @@ func main() {
 		ObjectMeta: types.ObjectMeta{Name: "x", ResourceVersion: 99999},
 		Spec:       types.PodSpec{Image: "ubuntu:22.04"},
 	}
-	data, _ = types.Encode(types.MessageTypePod, pod2)
+	data, _ = types.Encode(1, pod2)
 	fmt.Printf("JSON wire size: %d bytes\n", len(data))
 }

@@ -11,6 +11,16 @@ type Pod struct {
 	Spec PodSpec `json:"spec"`
 }
 
+type Node struct {
+	Name     string   `json:"name"`
+	Capacity Capacity `json:"capacity"`
+}
+
+type Capacity struct {
+	CPU    int64 `json:"cpu"`
+	Memory int64 `json:"memory"`
+}
+
 type PodSpec struct {
 	Image    string `json:"image"`
 	NodeName string `json:"nodeName"` // empty = unscheduled
