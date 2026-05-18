@@ -2,62 +2,24 @@ package main
 
 import (
 	"fmt"
-	"kore/internal/framer"
-	"kore/internal/types"
-	"net"
+	"kore/internal/apiserver"
+	"kore/internal/store"
+	"net/http"
 )
 
 func main() {
-	listener, err := net.Listen("tcp", ":8080")
-	if err != nil {
-		panic(err)
-	}
-	fmt.Println("Listening on :8080")
+	s := store.New()
+	srv := apiserver.New(s)
 
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			fmt.Println("accept error:", err)
-			continue
-		}
-		fmt.Println("new connection from", conn.RemoteAddr())
-		go handleConn(conn)
-	}
-}
+	mux := http.NewServeMux()
 
-func handleConn(conn net.Conn) {
-	defer conn.Close()
-	for {
-		// receive framed bytes
-		data, err := framer.ReadMessage(conn)
-		if err != nil {
-			fmt.Println("connection closed:", err)
-			return
-		}
+	// Pod endpoints
+	mux.HandleFunc("POST /pods", srv.CreatePod)
+	mux.HandleFunc("GET /pods/{namespace}/{name}", srv.GetPod)
+	mux.HandleFunc("GET /pods/{namespace}", srv.ListPods)
+	mux.HandleFunc("DELETE /pods/{namespace}/{name}", srv.DeletePod)
+	mux.HandleFunc("GET /watch/pods", srv.WatchPods)
 
-		// decode the envelope
-		msgType, payload, err := types.Decode(data)
-		if err != nil {
-			fmt.Println("decode error:", err)
-			continue
-		}
-
-		switch msgType {
-		case types.MessageTypePod:
-			pod, err := types.DecodePod(payload)
-			if err != nil {
-				fmt.Println("pod decode error:", err)
-				continue
-			}
-			fmt.Printf("received Pod: name=%s image=%s\n",
-				pod.Name, pod.Spec.Image)
-
-			// echo back the same pod
-			resp, _ := types.Encode(types.MessageTypePod, pod)
-			framer.WriteMessage(conn, resp)
-
-		default:
-			fmt.Printf("unknown message type: %d\n", msgType)
-		}
-	}
+	fmt.Println("kore api server listening on :8080")
+	http.ListenAndServe(":8080", mux)
 }

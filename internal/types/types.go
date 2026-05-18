@@ -25,3 +25,14 @@ type PodSpec struct {
 	Image    string `json:"image"`
 	NodeName string `json:"nodeName"` // empty = unscheduled
 }
+
+type Object interface {
+	GetName() string
+	GetNamespace() string
+	GetResourceVersion() uint64
+}
+
+// Implement Object on Pod
+func (p *Pod) GetName() string            { return p.Name }
+func (p *Pod) GetNamespace() string       { return p.Namespace }
+func (p *Pod) GetResourceVersion() uint64 { return p.ResourceVersion }
