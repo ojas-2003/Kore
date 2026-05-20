@@ -32,6 +32,19 @@ type Object interface {
 	GetResourceVersion() uint64
 }
 
+type EventType string
+
+const (
+	EventAdded    EventType = "ADDED"
+	EventModified EventType = "MODIFIED"
+	EventDeleted  EventType = "DELETED"
+)
+
+type Event struct {
+	Type   EventType
+	Object Object
+}
+
 // Implement Object on Pod
 func (p *Pod) GetName() string            { return p.Name }
 func (p *Pod) GetNamespace() string       { return p.Namespace }
