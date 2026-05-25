@@ -24,6 +24,11 @@ func main() {
 	mux.HandleFunc("PUT /pods/{namespace}/{name}", srv.UpdatePod)
 	mux.HandleFunc("DELETE /pods/{namespace}/{name}", srv.DeletePod)
 	mux.HandleFunc("GET /watch/pods/{namespace}", srv.WatchPods)
+	mux.HandleFunc("POST /nodes", srv.CreateNode)
+	mux.HandleFunc("GET /nodes", srv.ListNodes)
+	mux.HandleFunc("GET /nodes/{name}", srv.GetNode)
+	mux.HandleFunc("PUT /nodes/{name}", srv.UpdateNode)
+	mux.HandleFunc("DELETE /nodes/{name}", srv.DeleteNode)
 
 	fmt.Println("kore api server :8080")
 	http.ListenAndServe(":8080", mux)

@@ -11,6 +11,8 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
+const nodePrefix = "/resources/nodes/"
+
 type Store struct {
 	client *clientv3.Client
 }
@@ -218,4 +220,115 @@ func (s *Store) WatchPods(ctx context.Context, namespace string, startRev uint64
 	}()
 
 	return out
+}
+
+func nodeKey(name string) string {
+	return fmt.Sprintf("/resources/nodes/%s", name)
+}
+
+// ---- Node CRUD ----
+
+// CreateNode writes a node. Fails if it already exists.
+func (s *Store) CreateNode(ctx context.Context, node *types.Node) error {
+	key := nodeKey(node.Name)
+
+	data, err := json.Marshal(node)
+	if err != nil {
+		return fmt.Errorf("encoding node: %w", err)
+	}
+
+	txn, err := s.client.Txn(ctx).
+		If(clientv3.Compare(clientv3.CreateRevision(key), "=", 0)).
+		Then(clientv3.OpPut(key, string(data))).
+		Commit()
+
+	resp := txn
+	if err != nil {
+		return fmt.Errorf("etcd txn: %w", err)
+	}
+	if !resp.Succeeded {
+		return fmt.Errorf("node %s already exists", node.Name)
+	}
+
+	node.ResourceVersion = uint64(resp.Header.Revision)
+	return nil
+}
+
+// GetNode fetches a single node by name.
+func (s *Store) GetNode(ctx context.Context, name string) (*types.Node, error) {
+	resp, err := s.client.Get(ctx, nodeKey(name))
+	if err != nil {
+		return nil, fmt.Errorf("etcd get: %w", err)
+	}
+	if len(resp.Kvs) == 0 {
+		return nil, fmt.Errorf("node %s not found", name)
+	}
+
+	var node types.Node
+	if err := json.Unmarshal(resp.Kvs[0].Value, &node); err != nil {
+		return nil, fmt.Errorf("decoding node: %w", err)
+	}
+	node.ResourceVersion = uint64(resp.Kvs[0].ModRevision)
+	return &node, nil
+}
+
+// ListNodes returns all nodes plus the cluster revision at snapshot time.
+func (s *Store) ListNodes(ctx context.Context) ([]*types.Node, uint64, error) {
+	resp, err := s.client.Get(ctx, nodePrefix, clientv3.WithPrefix())
+	if err != nil {
+		return nil, 0, fmt.Errorf("etcd list: %w", err)
+	}
+
+	nodes := make([]*types.Node, 0, len(resp.Kvs))
+	for _, kv := range resp.Kvs {
+		var node types.Node
+		if err := json.Unmarshal(kv.Value, &node); err != nil {
+			continue
+		}
+		node.ResourceVersion = uint64(kv.ModRevision)
+		nodes = append(nodes, &node)
+	}
+	return nodes, uint64(resp.Header.Revision), nil
+}
+
+// UpdateNode does a conditional write keyed on ResourceVersion.
+// Used both for spec changes and status heartbeats from the kubelet (Ch.6).
+func (s *Store) UpdateNode(ctx context.Context, node *types.Node) error {
+	key := nodeKey(node.Name)
+
+	data, err := json.Marshal(node)
+	if err != nil {
+		return fmt.Errorf("encoding node: %w", err)
+	}
+
+	resp, err := s.client.Txn(ctx).
+		If(clientv3.Compare(
+			clientv3.ModRevision(key),
+			"=",
+			int64(node.ResourceVersion),
+		)).
+		Then(clientv3.OpPut(key, string(data))).
+		Commit()
+
+	if err != nil {
+		return fmt.Errorf("etcd txn: %w", err)
+	}
+	if !resp.Succeeded {
+		return fmt.Errorf("conflict: node %s was modified (sent rv=%d)", node.Name, node.ResourceVersion)
+	}
+
+	node.ResourceVersion = uint64(resp.Header.Revision)
+	return nil
+}
+
+// DeleteNode removes a node.
+func (s *Store) DeleteNode(ctx context.Context, name string) error {
+	resp, err := s.client.Delete(ctx, nodeKey(name))
+	if err != nil {
+		return fmt.Errorf("etcd delete: %w", err)
+	}
+	if resp.Deleted == 0 {
+		return fmt.Errorf("node %s not found", name)
+	}
+	return nil
 }

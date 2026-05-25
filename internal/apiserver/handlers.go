@@ -115,3 +115,74 @@ func (s *Server) WatchPods(w http.ResponseWriter, r *http.Request) {
 		flusher.Flush()
 	}
 }
+
+// POST /nodes
+func (s *Server) CreateNode(w http.ResponseWriter, r *http.Request) {
+	var node types.Node
+	if err := json.NewDecoder(r.Body).Decode(&node); err != nil {
+		errorResponse(w, http.StatusBadRequest, "invalid node JSON")
+		return
+	}
+	if node.Name == "" {
+		errorResponse(w, http.StatusBadRequest, "node name is required")
+		return
+	}
+	if err := s.store.CreateNode(r.Context(), &node); err != nil {
+		errorResponse(w, http.StatusConflict, err.Error())
+		return
+	}
+	respond(w, http.StatusCreated, node)
+}
+
+// GET /nodes/{name}
+func (s *Server) GetNode(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	node, err := s.store.GetNode(r.Context(), name)
+	if err != nil {
+		errorResponse(w, http.StatusNotFound, err.Error())
+		return
+	}
+	respond(w, http.StatusOK, node)
+}
+
+// GET /nodes
+func (s *Server) ListNodes(w http.ResponseWriter, r *http.Request) {
+	nodes, rev, err := s.store.ListNodes(r.Context())
+	if err != nil {
+		errorResponse(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.Header().Set("X-Resource-Version", fmt.Sprintf("%d", rev))
+	respond(w, http.StatusOK, nodes)
+}
+
+// PUT /nodes/{name}
+func (s *Server) UpdateNode(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+
+	var node types.Node
+	if err := json.NewDecoder(r.Body).Decode(&node); err != nil {
+		errorResponse(w, http.StatusBadRequest, "invalid node JSON")
+		return
+	}
+	// Guard against the URL and body disagreeing on which node this is.
+	if node.Name != name {
+		errorResponse(w, http.StatusBadRequest, "node name in URL and body do not match")
+		return
+	}
+	if err := s.store.UpdateNode(r.Context(), &node); err != nil {
+		errorResponse(w, http.StatusConflict, err.Error())
+		return
+	}
+	respond(w, http.StatusOK, node)
+}
+
+// DELETE /nodes/{name}
+func (s *Server) DeleteNode(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if err := s.store.DeleteNode(r.Context(), name); err != nil {
+		errorResponse(w, http.StatusNotFound, err.Error())
+		return
+	}
+	respond(w, http.StatusOK, map[string]string{"status": "deleted"})
+}

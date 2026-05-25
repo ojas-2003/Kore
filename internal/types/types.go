@@ -11,19 +11,9 @@ type Pod struct {
 	Spec PodSpec `json:"spec"`
 }
 
-type Node struct {
-	Name     string   `json:"name"`
-	Capacity Capacity `json:"capacity"`
-}
-
 type Capacity struct {
 	CPU    int64 `json:"cpu"`
 	Memory int64 `json:"memory"`
-}
-
-type PodSpec struct {
-	Image    string `json:"image"`
-	NodeName string `json:"nodeName"` // empty = unscheduled
 }
 
 type Object interface {
@@ -49,3 +39,33 @@ type Event struct {
 func (p *Pod) GetName() string            { return p.Name }
 func (p *Pod) GetNamespace() string       { return p.Namespace }
 func (p *Pod) GetResourceVersion() uint64 { return p.ResourceVersion }
+
+type Node struct {
+	ObjectMeta
+	Spec   NodeSpec   `json:"spec"`
+	Status NodeStatus `json:"status"`
+}
+
+type NodeSpec struct {
+	// For now, nothing. Real k8s puts unschedulable flags here, taints, etc.
+}
+
+type NodeStatus struct {
+	Capacity    ResourceList `json:"capacity"`    // total CPU/mem the node has
+	Allocatable ResourceList `json:"allocatable"` // what's left to give out
+}
+
+type ResourceList struct {
+	CPU    int64 `json:"cpu"`    // millicores — 1000 = 1 full CPU
+	Memory int64 `json:"memory"` // bytes
+}
+
+type PodSpec struct {
+	Image     string       `json:"image"`
+	NodeName  string       `json:"nodeName"`  // empty = unscheduled
+	Resources ResourceList `json:"resources"` // requested CPU/mem
+}
+
+func (n *Node) GetName() string            { return n.Name }
+func (n *Node) GetNamespace() string       { return n.Namespace }
+func (n *Node) GetResourceVersion() uint64 { return n.ResourceVersion }
