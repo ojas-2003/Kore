@@ -6,11 +6,6 @@ type ObjectMeta struct {
 	ResourceVersion uint64 `json:"resourceVersion"`
 }
 
-type Pod struct {
-	ObjectMeta
-	Spec PodSpec `json:"spec"`
-}
-
 type Capacity struct {
 	CPU    int64 `json:"cpu"`
 	Memory int64 `json:"memory"`
@@ -69,3 +64,24 @@ type PodSpec struct {
 func (n *Node) GetName() string            { return n.Name }
 func (n *Node) GetNamespace() string       { return n.Namespace }
 func (n *Node) GetResourceVersion() uint64 { return n.ResourceVersion }
+
+type Pod struct {
+	ObjectMeta
+	Spec   PodSpec   `json:"spec"`
+	Status PodStatus `json:"status"` // NEW
+}
+
+type PodStatus struct {
+	Phase       PodPhase `json:"phase"`
+	ContainerID string   `json:"containerID,omitempty"`
+	Message     string   `json:"message,omitempty"`
+}
+
+type PodPhase string
+
+const (
+	PodPending   PodPhase = "Pending"   // accepted, not yet running
+	PodRunning   PodPhase = "Running"   // container is up
+	PodSucceeded PodPhase = "Succeeded" // container exited 0
+	PodFailed    PodPhase = "Failed"    // container exited non-zero, or couldn't start
+)

@@ -45,6 +45,55 @@ func (c *Client) ListPods(ctx context.Context, namespace string) ([]*types.Pod, 
 	return pods, rev, nil
 }
 
+func (c *Client) GetPod(ctx context.Context, namespace, name string) (*types.Pod, error) {
+	url := fmt.Sprintf("%s/pods/%s/%s", c.baseURL, namespace, name)
+	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("pod %s/%s not found", namespace, name)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("get pod failed: status %d", resp.StatusCode)
+	}
+
+	var pod types.Pod
+	if err := json.NewDecoder(resp.Body).Decode(&pod); err != nil {
+		return nil, err
+	}
+	return &pod, nil
+}
+
+func (c *Client) CreateNode(ctx context.Context, node *types.Node) (*types.Node, error) {
+	body, _ := json.Marshal(node)
+	req, _ := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/nodes", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusConflict {
+		return nil, fmt.Errorf("node %s already exists", node.Name)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		return nil, fmt.Errorf("create node failed: status %d", resp.StatusCode)
+	}
+
+	var created types.Node
+	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+		return nil, err
+	}
+	return &created, nil
+}
+
 func (c *Client) ListNodes(ctx context.Context) ([]*types.Node, error) {
 	req, _ := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/nodes", nil)
 	resp, err := c.http.Do(req)
