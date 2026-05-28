@@ -87,3 +87,12 @@ func (d *DockerRuntime) IsRunning(ctx context.Context, containerID string) (bool
 	}
 	return info.State.Running, nil
 }
+
+func (d *DockerRuntime) ContainerIP(ctx context.Context, containerID string) (string, error) {
+	info, err := d.cli.ContainerInspect(ctx, containerID)
+	if err != nil {
+		return "", err
+	}
+	// Docker's default bridge network IP for this container.
+	return info.NetworkSettings.IPAddress, nil
+}

@@ -30,6 +30,12 @@ func main() {
 	mux.HandleFunc("PUT /nodes/{name}", srv.UpdateNode)
 	mux.HandleFunc("DELETE /nodes/{name}", srv.DeleteNode)
 
+	mux.HandleFunc("POST /deployments", srv.CreateDeployment)
+	mux.HandleFunc("GET /deployments/{namespace}/{name}", srv.GetDeployment)
+	mux.HandleFunc("GET /deployments/{namespace}", srv.ListDeployments)
+	mux.HandleFunc("PUT /deployments/{namespace}/{name}", srv.UpdateDeployment)
+	mux.HandleFunc("DELETE /deployments/{namespace}/{name}", srv.DeleteDeployment)
+
 	fmt.Println("kore api server :8080")
 	http.ListenAndServe(":8080", mux)
 }

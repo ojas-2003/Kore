@@ -332,3 +332,107 @@ func (s *Store) DeleteNode(ctx context.Context, name string) error {
 	}
 	return nil
 }
+
+// ---- Deployment CRUD ----
+
+func deploymentKey(namespace, name string) string {
+	return fmt.Sprintf("/resources/deployments/%s/%s", namespace, name)
+}
+
+func deploymentPrefix(namespace string) string {
+	return fmt.Sprintf("/resources/deployments/%s/", namespace)
+}
+
+func (s *Store) CreateDeployment(ctx context.Context, dep *types.Deployment) error {
+	key := deploymentKey(dep.Namespace, dep.Name)
+
+	data, err := json.Marshal(dep)
+	if err != nil {
+		return fmt.Errorf("encoding deployment: %w", err)
+	}
+
+	txn, err := s.client.Txn(ctx).
+		If(clientv3.Compare(clientv3.CreateRevision(key), "=", 0)).
+		Then(clientv3.OpPut(key, string(data))).
+		Commit()
+
+	resp := txn
+	if err != nil {
+		return fmt.Errorf("etcd txn: %w", err)
+	}
+	if !resp.Succeeded {
+		return fmt.Errorf("deployment %s/%s already exists", dep.Namespace, dep.Name)
+	}
+
+	dep.ResourceVersion = uint64(resp.Header.Revision)
+	return nil
+}
+
+func (s *Store) GetDeployment(ctx context.Context, namespace, name string) (*types.Deployment, error) {
+	resp, err := s.client.Get(ctx, deploymentKey(namespace, name))
+	if err != nil {
+		return nil, fmt.Errorf("etcd get: %w", err)
+	}
+	if len(resp.Kvs) == 0 {
+		return nil, fmt.Errorf("deployment %s/%s not found", namespace, name)
+	}
+
+	var dep types.Deployment
+	if err := json.Unmarshal(resp.Kvs[0].Value, &dep); err != nil {
+		return nil, fmt.Errorf("decoding deployment: %w", err)
+	}
+	dep.ResourceVersion = uint64(resp.Kvs[0].ModRevision)
+	return &dep, nil
+}
+
+func (s *Store) ListDeployments(ctx context.Context, namespace string) ([]*types.Deployment, uint64, error) {
+	resp, err := s.client.Get(ctx, deploymentPrefix(namespace), clientv3.WithPrefix())
+	if err != nil {
+		return nil, 0, fmt.Errorf("etcd list: %w", err)
+	}
+
+	deps := make([]*types.Deployment, 0, len(resp.Kvs))
+	for _, kv := range resp.Kvs {
+		var dep types.Deployment
+		if err := json.Unmarshal(kv.Value, &dep); err != nil {
+			continue
+		}
+		dep.ResourceVersion = uint64(kv.ModRevision)
+		deps = append(deps, &dep)
+	}
+	return deps, uint64(resp.Header.Revision), nil
+}
+
+func (s *Store) UpdateDeployment(ctx context.Context, dep *types.Deployment) error {
+	key := deploymentKey(dep.Namespace, dep.Name)
+
+	data, err := json.Marshal(dep)
+	if err != nil {
+		return fmt.Errorf("encoding deployment: %w", err)
+	}
+
+	resp, err := s.client.Txn(ctx).
+		If(clientv3.Compare(clientv3.ModRevision(key), "=", int64(dep.ResourceVersion))).
+		Then(clientv3.OpPut(key, string(data))).
+		Commit()
+	if err != nil {
+		return fmt.Errorf("etcd txn: %w", err)
+	}
+	if !resp.Succeeded {
+		return fmt.Errorf("conflict: deployment %s/%s was modified (sent rv=%d)", dep.Namespace, dep.Name, dep.ResourceVersion)
+	}
+
+	dep.ResourceVersion = uint64(resp.Header.Revision)
+	return nil
+}
+
+func (s *Store) DeleteDeployment(ctx context.Context, namespace, name string) error {
+	resp, err := s.client.Delete(ctx, deploymentKey(namespace, name))
+	if err != nil {
+		return fmt.Errorf("etcd delete: %w", err)
+	}
+	if resp.Deleted == 0 {
+		return fmt.Errorf("deployment %s/%s not found", namespace, name)
+	}
+	return nil
+}

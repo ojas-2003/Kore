@@ -147,6 +147,49 @@ func (c *Client) WatchPods(ctx context.Context, namespace string, fromRev uint64
 	return out, nil
 }
 
+func (c *Client) GetService(ctx context.Context, namespace, name string) (*types.Service, error) {
+	url := fmt.Sprintf("%s/services/%s/%s", c.baseURL, namespace, name)
+	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("service %s/%s not found", namespace, name)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("get service failed: status %d", resp.StatusCode)
+	}
+
+	var svc types.Service
+	if err := json.NewDecoder(resp.Body).Decode(&svc); err != nil {
+		return nil, err
+	}
+	return &svc, nil
+}
+
+// UpsertEndpoints creates or replaces the Endpoints object for a service.
+func (c *Client) UpsertEndpoints(ctx context.Context, ep *types.Endpoints) error {
+	body, _ := json.Marshal(ep)
+	url := fmt.Sprintf("%s/endpoints/%s/%s", c.baseURL, ep.Namespace, ep.Name)
+	req, _ := http.NewRequestWithContext(ctx, "PUT", url, strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return fmt.Errorf("upsert endpoints failed: status %d", resp.StatusCode)
+	}
+	return nil
+}
+
 // UpdatePod sends a PUT request with the pod's current ResourceVersion.
 // Returns a conflict error if someone else modified the pod in the meantime.
 func (c *Client) UpdatePod(ctx context.Context, pod *types.Pod) error {

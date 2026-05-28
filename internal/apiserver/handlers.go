@@ -186,3 +186,63 @@ func (s *Server) DeleteNode(w http.ResponseWriter, r *http.Request) {
 	}
 	respond(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
+
+// POST /deployments
+func (s *Server) CreateDeployment(w http.ResponseWriter, r *http.Request) {
+	var dep types.Deployment
+	if err := json.NewDecoder(r.Body).Decode(&dep); err != nil {
+		errorResponse(w, http.StatusBadRequest, "invalid deployment JSON")
+		return
+	}
+	if err := s.store.CreateDeployment(r.Context(), &dep); err != nil {
+		errorResponse(w, http.StatusConflict, err.Error())
+		return
+	}
+	respond(w, http.StatusCreated, dep)
+}
+
+// GET /deployments/{namespace}/{name}
+func (s *Server) GetDeployment(w http.ResponseWriter, r *http.Request) {
+	dep, err := s.store.GetDeployment(r.Context(), r.PathValue("namespace"), r.PathValue("name"))
+	if err != nil {
+		errorResponse(w, http.StatusNotFound, err.Error())
+		return
+	}
+	respond(w, http.StatusOK, dep)
+}
+
+// GET /deployments/{namespace}
+func (s *Server) ListDeployments(w http.ResponseWriter, r *http.Request) {
+	deps, rev, err := s.store.ListDeployments(r.Context(), r.PathValue("namespace"))
+	if err != nil {
+		errorResponse(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.Header().Set("X-Resource-Version", fmt.Sprintf("%d", rev))
+	respond(w, http.StatusOK, deps)
+}
+
+// PUT /deployments/{namespace}/{name}
+func (s *Server) UpdateDeployment(w http.ResponseWriter, r *http.Request) {
+	var dep types.Deployment
+	if err := json.NewDecoder(r.Body).Decode(&dep); err != nil {
+		errorResponse(w, http.StatusBadRequest, "invalid deployment JSON")
+		return
+	}
+	dep.Namespace = r.PathValue("namespace")
+	dep.Name = r.PathValue("name")
+	if err := s.store.UpdateDeployment(r.Context(), &dep); err != nil {
+		errorResponse(w, http.StatusConflict, err.Error())
+		return
+	}
+	respond(w, http.StatusOK, dep)
+}
+
+// DELETE /deployments/{namespace}/{name}
+func (s *Server) DeleteDeployment(w http.ResponseWriter, r *http.Request) {
+	if err := s.store.DeleteDeployment(r.Context(), r.PathValue("namespace"), r.PathValue("name")); err != nil {
+		errorResponse(w, http.StatusNotFound, err.Error())
+		return
+	}
+	respond(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
