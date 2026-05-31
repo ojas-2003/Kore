@@ -23,6 +23,9 @@ type Runtime interface {
 
 	// IsRunning reports whether a container is currently running.
 	IsRunning(ctx context.Context, containerID string) (bool, error)
+
+	// ContainerIP returns the primary IP address assigned to a container.
+	ContainerIP(ctx context.Context, containerID string) (string, error)
 }
 
 // DockerRuntime implements Runtime against the local Docker daemon.

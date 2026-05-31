@@ -6,7 +6,23 @@ import (
 	"kore/internal/etcdstore"
 	"kore/internal/types"
 	"net/http"
+	"sync/atomic"
+	"time"
 )
+
+var ipCounter atomic.Uint32
+
+func init() {
+	// Time-based seed so restarts don't re-issue the same IPs.
+	ipCounter.Store(uint32(time.Now().Unix() & 0xFE))
+}
+
+func allocateClusterIP() string {
+	n := ipCounter.Add(1)
+	// 127.96.x.x — entire 127.0.0.0/8 is loopback on macOS and Linux,
+	// so these addresses are bindable without root or ifconfig aliases.
+	return fmt.Sprintf("127.96.%d.%d", (n>>8)&0xFF, n&0xFF)
+}
 
 type Server struct {
 	store *etcdstore.Store
@@ -185,6 +201,95 @@ func (s *Server) DeleteNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respond(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+// POST /services
+func (s *Server) CreateService(w http.ResponseWriter, r *http.Request) {
+	var svc types.Service
+	if err := json.NewDecoder(r.Body).Decode(&svc); err != nil {
+		errorResponse(w, http.StatusBadRequest, "invalid service JSON")
+		return
+	}
+	if svc.Spec.ClusterIP == "" {
+		svc.Spec.ClusterIP = allocateClusterIP()
+	}
+	if err := s.store.CreateService(r.Context(), &svc); err != nil {
+		errorResponse(w, http.StatusConflict, err.Error())
+		return
+	}
+	respond(w, http.StatusCreated, svc)
+}
+
+// GET /services/{namespace}/{name}
+func (s *Server) GetService(w http.ResponseWriter, r *http.Request) {
+	svc, err := s.store.GetService(r.Context(), r.PathValue("namespace"), r.PathValue("name"))
+	if err != nil {
+		errorResponse(w, http.StatusNotFound, err.Error())
+		return
+	}
+	respond(w, http.StatusOK, svc)
+}
+
+// GET /services/{namespace}
+func (s *Server) ListServices(w http.ResponseWriter, r *http.Request) {
+	svcs, rev, err := s.store.ListServices(r.Context(), r.PathValue("namespace"))
+	if err != nil {
+		errorResponse(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.Header().Set("X-Resource-Version", fmt.Sprintf("%d", rev))
+	respond(w, http.StatusOK, svcs)
+}
+
+// PUT /services/{namespace}/{name}
+func (s *Server) UpdateService(w http.ResponseWriter, r *http.Request) {
+	var svc types.Service
+	if err := json.NewDecoder(r.Body).Decode(&svc); err != nil {
+		errorResponse(w, http.StatusBadRequest, "invalid service JSON")
+		return
+	}
+	svc.Namespace = r.PathValue("namespace")
+	svc.Name = r.PathValue("name")
+	if err := s.store.UpdateService(r.Context(), &svc); err != nil {
+		errorResponse(w, http.StatusConflict, err.Error())
+		return
+	}
+	respond(w, http.StatusOK, svc)
+}
+
+// DELETE /services/{namespace}/{name}
+func (s *Server) DeleteService(w http.ResponseWriter, r *http.Request) {
+	if err := s.store.DeleteService(r.Context(), r.PathValue("namespace"), r.PathValue("name")); err != nil {
+		errorResponse(w, http.StatusNotFound, err.Error())
+		return
+	}
+	respond(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+// GET /endpoints/{namespace}/{name}
+func (s *Server) GetEndpoints(w http.ResponseWriter, r *http.Request) {
+	ep, err := s.store.GetEndpoints(r.Context(), r.PathValue("namespace"), r.PathValue("name"))
+	if err != nil {
+		errorResponse(w, http.StatusNotFound, err.Error())
+		return
+	}
+	respond(w, http.StatusOK, ep)
+}
+
+// PUT /endpoints/{namespace}/{name}  — used by the endpoints controller
+func (s *Server) UpsertEndpoints(w http.ResponseWriter, r *http.Request) {
+	var ep types.Endpoints
+	if err := json.NewDecoder(r.Body).Decode(&ep); err != nil {
+		errorResponse(w, http.StatusBadRequest, "invalid endpoints JSON")
+		return
+	}
+	ep.Namespace = r.PathValue("namespace")
+	ep.Name = r.PathValue("name")
+	if err := s.store.UpsertEndpoints(r.Context(), &ep); err != nil {
+		errorResponse(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	respond(w, http.StatusOK, ep)
 }
 
 // POST /deployments

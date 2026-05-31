@@ -30,6 +30,15 @@ func main() {
 	mux.HandleFunc("PUT /nodes/{name}", srv.UpdateNode)
 	mux.HandleFunc("DELETE /nodes/{name}", srv.DeleteNode)
 
+	mux.HandleFunc("GET /endpoints/{namespace}/{name}", srv.GetEndpoints)
+	mux.HandleFunc("PUT /endpoints/{namespace}/{name}", srv.UpsertEndpoints)
+
+	mux.HandleFunc("POST /services", srv.CreateService)
+	mux.HandleFunc("GET /services/{namespace}/{name}", srv.GetService)
+	mux.HandleFunc("GET /services/{namespace}", srv.ListServices)
+	mux.HandleFunc("PUT /services/{namespace}/{name}", srv.UpdateService)
+	mux.HandleFunc("DELETE /services/{namespace}/{name}", srv.DeleteService)
+
 	mux.HandleFunc("POST /deployments", srv.CreateDeployment)
 	mux.HandleFunc("GET /deployments/{namespace}/{name}", srv.GetDeployment)
 	mux.HandleFunc("GET /deployments/{namespace}", srv.ListDeployments)

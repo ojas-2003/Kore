@@ -6,6 +6,7 @@ import (
 	"kore/internal/client"
 	"kore/internal/types"
 	"log"
+	"time"
 )
 
 type EndpointsController struct {
@@ -14,6 +15,56 @@ type EndpointsController struct {
 
 func NewEndpointsController(c *client.Client) *EndpointsController {
 	return &EndpointsController{client: c}
+}
+
+func (ec *EndpointsController) Run(ctx context.Context) error {
+	if err := ec.reconcileAllServices(ctx); err != nil {
+		log.Printf("endpoints controller initial reconcile: %v", err)
+	}
+
+	pods, rev, err := ec.client.ListPods(ctx, "default")
+	if err != nil {
+		return fmt.Errorf("list pods: %w", err)
+	}
+	_ = pods
+
+	events, err := ec.client.WatchPods(ctx, "default", rev)
+	if err != nil {
+		return fmt.Errorf("watch pods: %w", err)
+	}
+
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case _, ok := <-events:
+			if !ok {
+				log.Println("endpoints controller: watch ended, restarting")
+				return ec.Run(ctx)
+			}
+			if err := ec.reconcileAllServices(ctx); err != nil {
+				log.Printf("endpoints controller reconcile: %v", err)
+			}
+		case <-ticker.C:
+			if err := ec.reconcileAllServices(ctx); err != nil {
+				log.Printf("endpoints controller reconcile: %v", err)
+			}
+		}
+	}
+}
+
+func (ec *EndpointsController) reconcileAllServices(ctx context.Context) error {
+	svcs, _, err := ec.client.ListServices(ctx, "default")
+	if err != nil {
+		return err
+	}
+	for _, svc := range svcs {
+		ec.reconcile(ctx, svc)
+	}
+	return nil
 }
 
 // reconcile rebuilds the Endpoints for one Service from current pod state.

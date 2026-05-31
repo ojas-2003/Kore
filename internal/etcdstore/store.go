@@ -333,6 +333,145 @@ func (s *Store) DeleteNode(ctx context.Context, name string) error {
 	return nil
 }
 
+// ---- Endpoints CRUD ----
+
+func endpointKey(namespace, name string) string {
+	return fmt.Sprintf("/resources/endpoints/%s/%s", namespace, name)
+}
+
+// UpsertEndpoints is an unconditional put — endpoints are always replaced wholesale.
+func (s *Store) UpsertEndpoints(ctx context.Context, ep *types.Endpoints) error {
+	key := endpointKey(ep.Namespace, ep.Name)
+	data, err := json.Marshal(ep)
+	if err != nil {
+		return fmt.Errorf("encoding endpoints: %w", err)
+	}
+	if _, err := s.client.Put(ctx, key, string(data)); err != nil {
+		return fmt.Errorf("etcd put: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) GetEndpoints(ctx context.Context, namespace, name string) (*types.Endpoints, error) {
+	resp, err := s.client.Get(ctx, endpointKey(namespace, name))
+	if err != nil {
+		return nil, fmt.Errorf("etcd get: %w", err)
+	}
+	if len(resp.Kvs) == 0 {
+		return nil, fmt.Errorf("endpoints %s/%s not found", namespace, name)
+	}
+	var ep types.Endpoints
+	if err := json.Unmarshal(resp.Kvs[0].Value, &ep); err != nil {
+		return nil, fmt.Errorf("decoding endpoints: %w", err)
+	}
+	ep.ResourceVersion = uint64(resp.Kvs[0].ModRevision)
+	return &ep, nil
+}
+
+// ---- Service CRUD ----
+
+func serviceKey(namespace, name string) string {
+	return fmt.Sprintf("/resources/services/%s/%s", namespace, name)
+}
+
+func servicePrefix(namespace string) string {
+	return fmt.Sprintf("/resources/services/%s/", namespace)
+}
+
+func (s *Store) CreateService(ctx context.Context, svc *types.Service) error {
+	key := serviceKey(svc.Namespace, svc.Name)
+
+	data, err := json.Marshal(svc)
+	if err != nil {
+		return fmt.Errorf("encoding service: %w", err)
+	}
+
+	txn, err := s.client.Txn(ctx).
+		If(clientv3.Compare(clientv3.CreateRevision(key), "=", 0)).
+		Then(clientv3.OpPut(key, string(data))).
+		Commit()
+
+	resp := txn
+	if err != nil {
+		return fmt.Errorf("etcd txn: %w", err)
+	}
+	if !resp.Succeeded {
+		return fmt.Errorf("service %s/%s already exists", svc.Namespace, svc.Name)
+	}
+
+	svc.ResourceVersion = uint64(resp.Header.Revision)
+	return nil
+}
+
+func (s *Store) GetService(ctx context.Context, namespace, name string) (*types.Service, error) {
+	resp, err := s.client.Get(ctx, serviceKey(namespace, name))
+	if err != nil {
+		return nil, fmt.Errorf("etcd get: %w", err)
+	}
+	if len(resp.Kvs) == 0 {
+		return nil, fmt.Errorf("service %s/%s not found", namespace, name)
+	}
+
+	var svc types.Service
+	if err := json.Unmarshal(resp.Kvs[0].Value, &svc); err != nil {
+		return nil, fmt.Errorf("decoding service: %w", err)
+	}
+	svc.ResourceVersion = uint64(resp.Kvs[0].ModRevision)
+	return &svc, nil
+}
+
+func (s *Store) ListServices(ctx context.Context, namespace string) ([]*types.Service, uint64, error) {
+	resp, err := s.client.Get(ctx, servicePrefix(namespace), clientv3.WithPrefix())
+	if err != nil {
+		return nil, 0, fmt.Errorf("etcd list: %w", err)
+	}
+
+	svcs := make([]*types.Service, 0, len(resp.Kvs))
+	for _, kv := range resp.Kvs {
+		var svc types.Service
+		if err := json.Unmarshal(kv.Value, &svc); err != nil {
+			continue
+		}
+		svc.ResourceVersion = uint64(kv.ModRevision)
+		svcs = append(svcs, &svc)
+	}
+	return svcs, uint64(resp.Header.Revision), nil
+}
+
+func (s *Store) UpdateService(ctx context.Context, svc *types.Service) error {
+	key := serviceKey(svc.Namespace, svc.Name)
+
+	data, err := json.Marshal(svc)
+	if err != nil {
+		return fmt.Errorf("encoding service: %w", err)
+	}
+
+	resp, err := s.client.Txn(ctx).
+		If(clientv3.Compare(clientv3.ModRevision(key), "=", int64(svc.ResourceVersion))).
+		Then(clientv3.OpPut(key, string(data))).
+		Commit()
+	if err != nil {
+		return fmt.Errorf("etcd txn: %w", err)
+	}
+	if !resp.Succeeded {
+		return fmt.Errorf("conflict: service %s/%s was modified (sent rv=%d)", svc.Namespace, svc.Name, svc.ResourceVersion)
+	}
+
+	svc.ResourceVersion = uint64(resp.Header.Revision)
+	return nil
+}
+
+func (s *Store) DeleteService(ctx context.Context, namespace, name string) error {
+	resp, err := s.client.Delete(ctx, serviceKey(namespace, name))
+	if err != nil {
+		return fmt.Errorf("etcd delete: %w", err)
+	}
+	if resp.Deleted == 0 {
+		return fmt.Errorf("service %s/%s not found", namespace, name)
+	}
+	return nil
+}
+
 // ---- Deployment CRUD ----
 
 func deploymentKey(namespace, name string) string {

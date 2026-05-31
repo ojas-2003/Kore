@@ -13,7 +13,6 @@ func main() {
 		panic(err)
 	}
 	defer conn.Close()
-
 	// create a pod
 	pod := types.Pod{
 		ObjectMeta: types.ObjectMeta{

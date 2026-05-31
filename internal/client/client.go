@@ -133,10 +133,17 @@ func (c *Client) WatchPods(ctx context.Context, namespace string, fromRev uint64
 			if !strings.HasPrefix(line, "data: ") {
 				continue
 			}
-			var event types.Event
-			if err := json.Unmarshal([]byte(line[6:]), &event); err != nil {
+			// Unmarshal into a concrete struct so Object becomes *types.Pod,
+			// not map[string]interface{} (which is what happens when unmarshaling
+			// into the types.Event.Object interface field directly).
+			var wire struct {
+				Type   types.EventType `json:"Type"`
+				Object *types.Pod      `json:"Object"`
+			}
+			if err := json.Unmarshal([]byte(line[6:]), &wire); err != nil {
 				continue
 			}
+			event := types.Event{Type: wire.Type, Object: wire.Object}
 			select {
 			case out <- event:
 			case <-ctx.Done():
@@ -145,6 +152,106 @@ func (c *Client) WatchPods(ctx context.Context, namespace string, fromRev uint64
 		}
 	}()
 	return out, nil
+}
+
+func (c *Client) CreatePod(ctx context.Context, pod *types.Pod) (*types.Pod, error) {
+	body, _ := json.Marshal(pod)
+	req, _ := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/pods", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusConflict {
+		return nil, fmt.Errorf("pod already exists")
+	}
+	if resp.StatusCode != http.StatusCreated {
+		return nil, fmt.Errorf("create pod failed: status %d", resp.StatusCode)
+	}
+
+	var created types.Pod
+	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+		return nil, err
+	}
+	return &created, nil
+}
+
+func (c *Client) DeletePod(ctx context.Context, namespace, name string) error {
+	url := fmt.Sprintf("%s/pods/%s/%s", c.baseURL, namespace, name)
+	req, _ := http.NewRequestWithContext(ctx, "DELETE", url, nil)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("delete pod failed: status %d", resp.StatusCode)
+	}
+	return nil
+}
+
+func (c *Client) ListDeployments(ctx context.Context, namespace string) ([]*types.Deployment, uint64, error) {
+	url := fmt.Sprintf("%s/deployments/%s", c.baseURL, namespace)
+	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer resp.Body.Close()
+
+	var deps []*types.Deployment
+	if err := json.NewDecoder(resp.Body).Decode(&deps); err != nil {
+		return nil, 0, err
+	}
+	rev, _ := strconv.ParseUint(resp.Header.Get("X-Resource-Version"), 10, 64)
+	return deps, rev, nil
+}
+
+func (c *Client) ListServices(ctx context.Context, namespace string) ([]*types.Service, uint64, error) {
+	url := fmt.Sprintf("%s/services/%s", c.baseURL, namespace)
+	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer resp.Body.Close()
+
+	var svcs []*types.Service
+	if err := json.NewDecoder(resp.Body).Decode(&svcs); err != nil {
+		return nil, 0, err
+	}
+	rev, _ := strconv.ParseUint(resp.Header.Get("X-Resource-Version"), 10, 64)
+	return svcs, rev, nil
+}
+
+func (c *Client) GetEndpoints(ctx context.Context, namespace, name string) (*types.Endpoints, error) {
+	url := fmt.Sprintf("%s/endpoints/%s/%s", c.baseURL, namespace, name)
+	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("endpoints %s/%s not found", namespace, name)
+	}
+	var ep types.Endpoints
+	if err := json.NewDecoder(resp.Body).Decode(&ep); err != nil {
+		return nil, err
+	}
+	return &ep, nil
 }
 
 func (c *Client) GetService(ctx context.Context, namespace, name string) (*types.Service, error) {

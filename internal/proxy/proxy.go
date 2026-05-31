@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"kore/internal/client"
 	"kore/internal/types"
@@ -9,6 +10,7 @@ import (
 	"math/rand"
 	"net"
 	"sync"
+	"time"
 )
 
 // Proxy listens on a local port per Service and forwards each connection
@@ -44,7 +46,10 @@ func (p *Proxy) syncService(ctx context.Context, svc *types.Service, endpoints [
 		// Start a listener on the service's ClusterIP:Port.
 		// On a laptop we listen on 127.0.0.1:<port> as a stand-in for the
 		// ClusterIP, since the ClusterIP isn't a real local address.
-		addr := svc.Spec.ClusterIP // on Linux you can bind the real ClusterIP
+		// Bind on all interfaces so no loopback alias is needed on macOS.
+		// ClusterIP is used by kore-dns for name resolution; the proxy
+		// just needs a reachable port on localhost.
+		addr := fmt.Sprintf("0.0.0.0:%d", svc.Spec.Port)
 		ln, err := net.Listen("tcp", addr)
 		if err != nil {
 			log.Printf("proxy listen %s: %v", addr, err)
@@ -60,6 +65,41 @@ func (p *Proxy) syncService(ctx context.Context, svc *types.Service, endpoints [
 	sl.mu.Lock()
 	sl.backends = endpoints
 	sl.mu.Unlock()
+}
+
+// Run syncs all services on startup then polls every 5 s for endpoint changes.
+func (p *Proxy) Run(ctx context.Context) error {
+	p.syncAll(ctx)
+
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			p.syncAll(ctx)
+		}
+	}
+}
+
+func (p *Proxy) syncAll(ctx context.Context) {
+	svcs, _, err := p.client.ListServices(ctx, "default")
+	if err != nil {
+		log.Printf("proxy: list services: %v", err)
+		return
+	}
+	for _, svc := range svcs {
+		if svc.Spec.ClusterIP == "" {
+			continue
+		}
+		ep, err := p.client.GetEndpoints(ctx, svc.Namespace, svc.Name)
+		if err != nil {
+			p.syncService(ctx, svc, nil)
+			continue
+		}
+		p.syncService(ctx, svc, ep.Subsets)
+	}
 }
 
 // acceptLoop handles incoming connections to a service, forwarding each

@@ -101,18 +101,19 @@ func (k *Kubelet) reconcile(ctx context.Context, pod *types.Pod) {
 
 	// Start the container.
 	log.Printf("starting pod %s (image=%s)", key, pod.Spec.Image)
-	k.updateStatus(ctx, pod, types.PodPending, "", "pulling image and starting")
+	k.updateStatus(ctx, pod, types.PodPending, "", "", "pulling image and starting")
 
 	containerID, err := k.runtime.StartContainer(ctx, key, pod.Spec.Image)
 	if err != nil {
 		log.Printf("failed to start %s: %v", key, err)
-		k.updateStatus(ctx, pod, types.PodFailed, "", err.Error())
+		k.updateStatus(ctx, pod, types.PodFailed, "", "", err.Error())
 		return
 	}
 
+	podIP, _ := k.runtime.ContainerIP(ctx, containerID)
 	k.state.set(key, &podState{containerID: containerID, image: pod.Spec.Image})
-	k.updateStatus(ctx, pod, types.PodRunning, containerID, "")
-	log.Printf("pod %s running as container %s", key, containerID[:12])
+	k.updateStatus(ctx, pod, types.PodRunning, containerID, podIP, "")
+	log.Printf("pod %s running as container %s ip=%s", key, containerID[:12], podIP)
 }
 
 // teardown stops a pod's container when the pod is deleted.
@@ -128,7 +129,7 @@ func (k *Kubelet) teardown(ctx context.Context, pod *types.Pod) {
 }
 
 // updateStatus writes the pod's actual state back to the API server.
-func (k *Kubelet) updateStatus(ctx context.Context, pod *types.Pod, phase types.PodPhase, containerID, msg string) {
+func (k *Kubelet) updateStatus(ctx context.Context, pod *types.Pod, phase types.PodPhase, containerID, podIP, msg string) {
 	// Re-fetch to get the latest resourceVersion (avoid conflicts).
 	fresh, err := k.client.GetPod(ctx, pod.Namespace, pod.Name)
 	if err != nil {
@@ -136,6 +137,7 @@ func (k *Kubelet) updateStatus(ctx context.Context, pod *types.Pod, phase types.
 	}
 	fresh.Status.Phase = phase
 	fresh.Status.ContainerID = containerID
+	fresh.Status.PodIP = podIP
 	fresh.Status.Message = msg
 	if err := k.client.UpdatePod(ctx, fresh); err != nil {
 		log.Printf("status update for %s failed: %v", pod.Name, err)
